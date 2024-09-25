@@ -1,0 +1,1354 @@
+Contents of .ts and .tsx files in src folder:
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/auth/login/route.ts ---
+
+// src/app/api/auth/login/route.ts
+
+import { NextResponse } from 'next/server';
+import { authenticateUser, generateToken, fetchUserData } from '@/lib/auth';
+
+const COOKIE_NAME = process.env.COOKIE_NAME || 'auth_token';
+
+export async function POST(request: Request) {
+  try {
+    const { email, password } = await request.json();
+
+    if (!email || !password) {
+      console.warn('Login attempt with missing credentials');
+      return NextResponse.json(
+        { success: false, message: 'Email and password are required' },
+        { status: 400 }
+      );
+    }
+
+    // Authenticate user with external API
+    const { accessToken } = await authenticateUser(email, password);
+
+    // Fetch user data using the access token
+    const user = await fetchUserData(accessToken);
+
+    // Generate a JWT for your application
+    const appToken = await generateToken(user);
+
+    // Create a response and set the auth_token cookie
+    const response = NextResponse.json({ success: true, message: 'Login successful' });
+
+    response.cookies.set(COOKIE_NAME, appToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 60 * 60, // 1 hour
+      path: '/',
+    });
+
+    console.log(`User ${email} logged in successfully`);
+    return response;
+  } catch (error) {
+    console.error(`Login failed: ${(error as Error).message}`);
+    return NextResponse.json(
+      { success: false, message: error.message || 'Authentication failed' },
+      { status: 401 }
+    );
+  }
+}
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/auth/logout/route.ts ---
+
+// src/app/api/auth/logout/route.ts
+
+import { NextResponse } from 'next/server';
+import { serialize } from 'cookie';
+
+export async function POST(request: Request) {
+  try {
+    const response = NextResponse.json({ message: 'Logged out successfully' });
+
+    response.headers.append('Set-Cookie', serialize(process.env.COOKIE_NAME || 'auth_token', '', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      expires: new Date(0),
+      path: '/',
+    }));
+
+    console.log('User logged out successfully');
+    return response;
+  } catch (error) {
+    console.error(`Logout failed: ${(error as Error).message}`);
+    return NextResponse.json(
+      { message: 'Logout failed' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/auth/signup/route.ts ---
+
+// src/app/api/auth/signup/route.ts
+
+import { NextResponse } from 'next/server';
+import { createUser } from '../../../../lib/auth';
+import { SignupResponse } from '../../../../lib/api.types';
+
+export async function POST(request: Request) {
+  try {
+    const { email, password } = await request.json();
+
+    if (!email || !password) {
+      console.warn('Signup attempt with missing credentials');
+      return NextResponse.json(
+        { message: 'Email and password are required' },
+        { status: 400 }
+      );
+    }
+
+    const userId = await createUser(email, password);
+
+    console.log(`User ${email} signed up successfully with ID ${userId}`);
+    return NextResponse.json(
+      { message: 'User created successfully', user_id: userId },
+      { status: 201 }
+    );
+  } catch (error) {
+    console.error(`Signup failed: ${(error as Error).message}`);
+    return NextResponse.json(
+      { message: (error as Error).message || 'User creation failed' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/auth/token_refresh/route.ts ---
+
+// src/app/api/auth/refresh-token/route.ts
+
+import { NextResponse } from 'next/server';
+import { verifyToken, generateToken } from '@/lib/auth';
+import { parse } from 'cookie';
+const COOKIE_NAME = process.env.COOKIE_NAME || 'auth_token'; // Added COOKIE_NAME
+
+export async function POST(request: Request) {
+  try {
+    const cookieHeader = request.headers.get('cookie');
+    if (!cookieHeader) {
+      console.warn('No cookies found in the request');
+      return NextResponse.json({ success: false, message: 'No refresh token provided' }, { status: 401 });
+    }
+
+    const cookies = parse(cookieHeader);
+    const oldToken = cookies[COOKIE_NAME];
+
+    if (!oldToken) {
+      console.warn('No refresh token found');
+      return NextResponse.json({ success: false, message: 'No refresh token provided' }, { status: 401 });
+    }
+
+    const user = await verifyToken(oldToken);
+    if (!user) {
+      console.warn('Invalid refresh token');
+      return NextResponse.json({ success: false, message: 'Invalid refresh token' }, { status: 401 });
+    }
+
+    // Generate a new token
+    const newToken = await generateToken(user);
+
+    // Set the new token in the cookie
+    const response = NextResponse.json({ success: true, message: 'Token refreshed successfully' }, { status: 200 });
+    response.cookies.set(COOKIE_NAME, newToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 60 * 60, // 1 hour
+      path: '/',
+    });
+
+    return response;
+  } catch (error) {
+    console.error(`Token refresh failed: ${(error as Error).message}`);
+    return NextResponse.json({ success: false, message: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/me/route.ts ---
+
+// src/app/api/me/route.ts
+
+import { NextResponse } from 'next/server';
+import { UserResponse } from '@/lib/api.types';
+
+export async function GET(request: Request) {
+  try {
+    const userId = request.headers.get('x-user-id');
+    const userEmail = request.headers.get('x-user-email');
+    // You can access other user properties if needed
+
+    if (!userId || !userEmail) {
+      console.warn('User information is missing in the request headers');
+      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+    }
+
+    const userResponse: UserResponse = {
+      id: userId,
+      email: userEmail,
+      // Populate other fields as needed
+    };
+
+    return NextResponse.json({ success: true, data: userResponse }, { status: 200 });
+  } catch (error) {
+    console.error(`Fetching user info failed: ${(error as Error).message}`);
+    return NextResponse.json({ success: false, message: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/publications/route.ts ---
+
+// src/app/api/publications/route.ts
+
+import { NextResponse } from 'next/server';
+import { makeAuthenticatedRequest } from '@/lib/api';
+import { PublicationsResponse } from '@/lib/api.types';
+
+export async function GET(request: Request) {
+  try {
+    const accessToken = request.headers.get('x-access-token');
+
+    if (!accessToken) {
+      console.warn('Access token is missing in the request headers');
+      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+    }
+
+    const response = await makeAuthenticatedRequest<PublicationsResponse>(
+      '/publications/',
+      accessToken,
+      { method: 'GET' }
+    );
+
+    const data = response.data;
+
+    return NextResponse.json(data, { status: 200 });
+  } catch (error) {
+    console.error(`Fetching publications failed: ${(error as Error).message}`);
+    return NextResponse.json({ message: 'Failed to fetch publications' }, { status: 500 });
+  }
+}
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/dashboard/layout.tsx ---
+
+// src/app/dashboard/layout.tsx
+
+'use client';
+
+import React from 'react';
+import LogoutButton from '@/components/LogoutButton';
+import { useRouter } from 'next/navigation';
+
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const router = useRouter();
+
+  const handlePublicationClick = () => {
+    router.push('/dashboard/publications');
+   
+  };
+
+  return (
+    <div className="dashboard-layout">
+      <nav>
+        <h2>Dashboard</h2>
+        <button onClick={handlePublicationClick}>Publications</button>
+        <LogoutButton />
+      </nav>
+      <main>{children}</main>
+    </div>
+  );
+}
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/dashboard/page.tsx ---
+
+// src/app/dashboard/page.tsx
+
+import React from 'react';
+
+
+const DashboardPage: React.FC = () => {
+  
+  return (
+    <div className="dashboard-page">
+      <h1>Welcome to your Dashboard!</h1>
+      <p>Select an option from the navigation menu.</p>
+    </div>
+  );
+};
+
+export default DashboardPage;
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/dashboard/publications/page.tsx ---
+
+// src/app/dashboard/publications/page.tsx
+
+import React from 'react';
+import PublicationsList from '@/components/PublicationsList';
+
+
+const PublicationsPage: React.FC = () => {
+
+  return (
+    <div className="publications-page">
+      <PublicationsList />
+    </div>
+  );
+};
+
+export default PublicationsPage;
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/layout.tsx ---
+
+// src/app/layout.tsx
+
+import './globals.css';
+import { AuthProvider } from '@/context/AuthContext';
+
+export const metadata = {
+  title: 'My Next.js App',
+  description: 'A sample application using Next.js 13 App Router',
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+
+  return (
+    <html lang="en">
+      <body>
+        <AuthProvider>
+          {children}
+        </AuthProvider>
+      </body>
+    </html>
+  );
+}
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/login/page.tsx ---
+
+// src/app/login/page.tsx
+
+'use client';
+
+import React, { useState } from 'react';
+import { useAuth } from '@/hooks/useAuth';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+
+const LoginPage: React.FC = () => {
+  const { login } = useAuth();
+  const router = useRouter();
+
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      await login(email, password);
+      console.log(`User ${email} logged in`);
+      router.push('/dashboard');
+    } catch (err) {
+      setError((err as Error).message);
+      console.error(`Login failed for ${email}: ${(err as Error).message}`);
+    }
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-gray-50">
+      <div className="bg-white p-8 rounded-md shadow-md w-full max-w-md">
+        <h1 className="text-2xl font-bold mb-4 text-center">Login</h1>
+        {error && <p className="text-red-500 mb-4 text-center">{error}</p>}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              required
+              className="mt-1 p-2 block w-full border rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              required
+              className="mt-1 p-2 block w-full border rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+            />
+          </div>
+          <button
+            type="submit"
+            className="w-full bg-indigo-600 text-white p-2 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+          >
+            Login
+          </button>
+        </form>
+        <p className="mt-4 text-center text-sm text-gray-500">
+          Don't have an account?{' '}
+          <Link href="/signup" className="text-indigo-600 hover:underline">Sign up here</Link>.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default LoginPage;
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/middleware.ts ---
+
+// middleware.ts
+
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { verifyToken } from '@/lib/auth';
+
+export async function middleware(req: NextRequest) {
+  const token = req.cookies.get(process.env.COOKIE_NAME || 'auth_token')?.value;
+
+  if (!token) {
+    console.warn(`Unauthorized access attempt to ${req.nextUrl.pathname}`);
+    return NextResponse.redirect(new URL('/login', req.url));
+  }
+
+  const user = await verifyToken(token);
+  if (!user) {
+    console.warn(`Invalid token for access to ${req.nextUrl.pathname}`);
+    return NextResponse.redirect(new URL('/login', req.url));
+  }
+
+  // Attach user info and token to request headers for BFF endpoints
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set('x-user-id', user.id);
+  requestHeaders.set('x-user-email', user.email);
+  requestHeaders.set('x-access-token', token);
+
+  // Forward the modified request to the next handler
+  return NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
+}
+
+export const config = {
+  matcher: [
+    '/dashboard/:path*',
+    '/publications/:path*',
+    '/api/:path*', // Include your BFF API routes
+  ],
+};
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/page.tsx ---
+
+import Image from "next/image";
+
+export default function Home() {
+  return (
+    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
+      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
+        <Image
+          className="dark:invert"
+          src="https://nextjs.org/icons/next.svg"
+          alt="Next.js logo"
+          width={180}
+          height={38}
+          priority
+        />
+        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
+          <li className="mb-2">
+            Get started by editing{" "}
+            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
+              src/app/page.tsx
+            </code>
+            .
+          </li>
+          <li>Save and see your changes instantly.</li>
+        </ol>
+
+        <div className="flex gap-4 items-center flex-col sm:flex-row">
+          <a
+            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
+            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Image
+              className="dark:invert"
+              src="https://nextjs.org/icons/vercel.svg"
+              alt="Vercel logomark"
+              width={20}
+              height={20}
+            />
+            Deploy now
+          </a>
+          <a
+            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
+            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Read our docs
+          </a>
+        </div>
+      </main>
+      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
+        <a
+          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
+          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <Image
+            aria-hidden
+            src="https://nextjs.org/icons/file.svg"
+            alt="File icon"
+            width={16}
+            height={16}
+          />
+          Learn
+        </a>
+        <a
+          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
+          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <Image
+            aria-hidden
+            src="https://nextjs.org/icons/window.svg"
+            alt="Window icon"
+            width={16}
+            height={16}
+          />
+          Examples
+        </a>
+        <a
+          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
+          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <Image
+            aria-hidden
+            src="https://nextjs.org/icons/globe.svg"
+            alt="Globe icon"
+            width={16}
+            height={16}
+          />
+          Go to nextjs.org →
+        </a>
+      </footer>
+    </div>
+  );
+}
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/signup/page.tsx ---
+
+// src/app/signup/page.tsx
+
+'use client';
+
+import React, { useState } from 'react';
+import { useAuth } from '@/hooks/useAuth';
+import { useRouter } from 'next/navigation';
+
+const SignupPage: React.FC = () => {
+  const { signup } = useAuth();
+  const router = useRouter();
+
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      await signup(email, password);
+      console.log(`User ${email} signed up and logged in`);
+      router.push('/dashboard');
+    } catch (err) {
+      setError((err as Error).message);
+      console.error(`Signup failed for ${email}: ${(err as Error).message}`);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+        <h1 className="text-2xl font-bold mb-4 text-center">Sign Up</h1>
+        {error && <p className="text-red-500 mb-4">{error}</p>}
+        <form onSubmit={handleSignup} className="space-y-4">
+          <div>
+            <label htmlFor="email" className="block text-gray-700 font-medium">Email</label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="mt-1 w-full border rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label htmlFor="password" className="block text-gray-700 font-medium">Password</label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className="mt-1 w-full border rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <button
+            type="submit"
+            className="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+          >
+            Sign Up
+          </button>
+        </form>
+        <p className="text-center mt-4">
+          Already have an account?{' '}
+          <a href="/login" className="text-blue-500 hover:underline">
+            Login here
+          </a>
+          .
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default SignupPage;
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/components/LogoutButton.tsx ---
+
+// src/components/LogoutButton.tsx
+
+'use client';
+
+import React from 'react';
+import { useAuth } from '@/hooks/useAuth';
+import { useRouter } from 'next/navigation';
+// Removed the logger import
+
+const LogoutButton: React.FC = () => {
+  const { logout } = useAuth();
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      console.log('User logged out successfully'); // Use console.log or client-side logging
+      router.push('/login');
+    } catch (error) {
+      console.error(`Logout error: ${(error as Error).message}`); // Use console.error
+      alert('Logout failed. Please try again.');
+    }
+  };
+
+  return (
+    <button onClick={handleLogout} className="logout-button">
+      Logout
+    </button>
+  );
+};
+
+export default LogoutButton;
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/components/PublicationsList.tsx ---
+
+// src/components/PublicationsList.tsx
+
+'use client';
+
+import React, { useEffect, useState } from 'react';
+import { Publication } from '@/lib/api.types';
+
+
+const PublicationsList: React.FC = () => {
+  const [publications, setPublications] = useState<Publication[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchPublications = async () => {
+      try {
+        const res = await fetch('/api/publications/', {
+          method: 'GET',
+          credentials: 'include',
+        });
+
+        if (!res.ok) {
+          const errorData = await res.json();
+          throw new Error(errorData.message || 'Failed to fetch publications');
+        }
+
+        const data: Publication[] = await res.json();
+        setPublications(data);
+      } catch (err) {
+        console.error(`Failed to fetch publications: ${err instanceof Error ? err.message : err}`);
+        setError(err instanceof Error ? err.message : String(err)); // Convert to string if not an Error
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPublications();
+  }, []);
+
+  if (loading) {
+    return <div>Loading publications...</div>;
+  }
+
+  if (error) {
+    return <div>Error loading publications: {error}</div>;
+  }
+
+  return (
+    <div>
+      <h2>Publications</h2>
+      <ul>
+        {publications.map(pub => (
+          <li key={pub.id}>
+            <h3>{pub.name}</h3>
+            <p>Type: {pub.publication_type}</p>
+            <p>Description: {pub.description || 'N/A'}</p>
+            <p>Privacy: {pub.privacy}</p>
+            {pub.logo && <img src={pub.logo.file} alt={`${pub.name} Logo`} width={100} />}
+            {pub.cover_image && <img src={pub.cover_image.file} alt={`${pub.name} Cover`} width={200} />}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+export default PublicationsList;
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/context/AuthContext.tsx ---
+
+// src/context/AuthContext.tsx
+
+'use client';
+
+import React, { createContext, useState, useEffect, useCallback } from 'react';
+import { AuthContextType, User } from './AuthContext.types';
+import { makeAuthenticatedRequest } from '../lib/api';
+
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+
+  // Fetch user data
+  const fetchUser = useCallback(async () => {
+    try {
+      const response = await fetch('/api/me/', {
+        method: 'GET',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        setUser(null);
+        return;
+      }
+
+      const data: User = await response.json();
+      setUser(data);
+    } catch (error) {
+        console.error(`Failed to fetch user: ${(error as Error).message}`);
+      setUser(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUser();
+  }, [fetchUser]);
+
+  // Login function
+  const login = async (email: string, password: string) => {
+    try {
+      const res = await fetch('/api/auth/login/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email, password }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || 'Login failed');
+      }
+
+      await fetchUser();
+    } catch (error) {
+      console.error(`Login error: ${(error as Error).message}`);
+      throw error;
+    }
+  };
+
+  // Logout function
+  const logout = async () => {
+    try {
+      const res = await fetch('/api/auth/logout/', {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || 'Logout failed');
+      }
+
+      setUser(null);
+    } catch (error) {
+      console.error(`Logout error: ${(error as Error).message}`);
+      throw error;
+    }
+  };
+
+  // Signup function
+  const signup = async (email: string, password: string) => {
+    try {
+      const res = await fetch('/api/auth/signup/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        const errorMessage = errorData.message || 'Signup failed';
+        console.error(`Signup error: ${errorMessage}`, errorData); // Log detailed error information
+        throw new Error(errorMessage);
+      }
+
+      // Optionally, log the user in after signup
+      await login(email, password);
+    } catch (error) {
+      console.error(`Signup error: ${(error as Error).message}`);
+      throw error;
+    }
+  };
+
+  // Refresh token function
+  const refreshToken = async () => {
+    try {
+      const res = await fetch('/api/auth/token_refresh/', {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        throw new Error('Token refresh failed');
+      }
+
+      await fetchUser();
+    } catch (error) {
+      console.error(`Refresh token error: ${(error as Error).message}`);
+      setUser(null);
+    }
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, login, logout, signup, refreshToken }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/context/AuthContext.types.ts ---
+
+// src/context/AuthContext.types.ts
+
+export interface UserProfile {
+    bio: string;
+    birth_date: string | null;
+    location: string;
+  }
+  
+  export interface User {
+    id: string;
+    email: string;
+    username: string;
+    is_staff: boolean;
+    is_active: boolean;
+    date_joined: string;
+    profile: UserProfile;
+  }
+  
+  export interface AuthContextType {
+    user: User | null;
+    login: (email: string, password: string) => Promise<void>;
+    logout: () => Promise<void>;
+    signup: (email: string, password: string) => Promise<void>;
+    refreshToken: () => Promise<void>;
+  }
+  
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/hooks/useAuth.ts ---
+
+// src/hooks/useAuth.ts
+
+import { useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
+import { AuthContextType } from '../context/AuthContext.types';
+
+export const useAuth = (): AuthContextType => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/hooks/useAuth.types.ts ---
+
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/lib/api.ts ---
+
+// src/lib/api.ts
+
+
+const API_BASE_URL = process.env.EXTERNAL_API_BASE_URL || 'https://dev.withgpt.com/api';
+
+import { ApiResponse } from './api.types';
+
+export async function makeAuthenticatedRequest<T>(endpoint: string, accessToken: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+        ...(options.headers || {})
+      },
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Request failed');
+    }
+
+    return response.json() as Promise<ApiResponse<T>>;
+  } catch (error) {
+    console.error('Authenticated request failed:', error);
+    throw error;
+  }
+}
+
+// Additional API calls can be defined here if needed
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/lib/api.types.ts ---
+
+  // src/lib/api.types.ts
+  
+  export interface ApiResponse<T> {
+    data: T;
+  }
+  
+  export interface ApiError {
+    message: string;
+  }
+  
+  // Define specific response types as needed
+  export interface LoginResponse {
+    message: string;
+    id: string;
+    username: string;
+    email: string;
+    full_name: string | null;
+    access_token: string;
+    refresh_token: string;
+  }
+  
+  export interface SignupResponse {
+    message: string;
+    user_id: string;
+  }
+  
+  export interface UserResponse {
+    id: string;
+    email: string;
+    username: string;
+    is_staff: boolean;
+    is_active: boolean;
+    date_joined: string;
+    profile: {
+      bio: string;
+      birth_date: string | null;
+      location: string;
+    };
+  }
+  
+  export interface Publication {
+    id: string;
+    name: string;
+    publication_type: string;
+    description: string;
+    privacy: string;
+    logo: {
+      id: string;
+      file: string;
+    } | null;
+    cover_image: {
+      id: string;
+      file: string;
+    } | null;
+    publication_video: string | null;
+    created_by: {
+      id: string;
+      email: string;
+    };
+    members: Array<{
+      id: string;
+      user: {
+        id: string;
+        email: string;
+      };
+    }>;
+  }
+  
+  export type PublicationsResponse = Publication[];
+  
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/lib/auth.ts ---
+
+// src/lib/auth.ts
+
+import { SignJWT, jwtVerify } from 'jose';
+import { ApiResponse, LoginResponse } from './api.types';
+import { User } from '../context/AuthContext.types';
+
+// ------------------------
+// Configuration Constants
+// ------------------------
+
+// Secret key for signing and verifying JWTs.
+// Ensure this is a strong, random string in production environments.
+// It's recommended to store this in environment variables.
+const AUTH_SECRET = new TextEncoder().encode(process.env.AUTH_SECRET || 'default-secret');
+
+// Name of the authentication cookie.
+// Can be customized via environment variables.
+const COOKIE_NAME = process.env.COOKIE_NAME || 'auth_token';
+
+// Base URL for the external API your application interacts with.
+// Ensure this is correctly set in your environment variables.
+const API_BASE_URL = process.env.EXTERNAL_API_BASE_URL || 'https://dev.withgpt.com/api';
+
+// ------------------------
+// Helper Functions
+// ------------------------
+
+/**
+ * Makes an authenticated request to the external API.
+ * @param endpoint - The API endpoint to interact with.
+ * @param accessToken - The JWT access token for authentication.
+ * @param options - Additional fetch options.
+ * @returns The parsed JSON response from the API.
+ * @throws Will throw an error if the request fails.
+ */
+export async function makeAuthenticatedRequest<T>(
+  endpoint: string,
+  accessToken: string,
+  options: RequestInit = {}
+): Promise<ApiResponse<T>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+        ...(options.headers || {}),
+      },
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Request failed');
+    }
+
+    const data = await response.json();
+    return { data } as ApiResponse<T>;
+  } catch (error) {
+    console.error('Authenticated request failed:', error);
+    throw error;
+  }
+}
+
+// ------------------------
+// Authentication Functions
+// ------------------------
+
+/**
+ * Authenticates a user by verifying their email and password.
+ * Communicates with the external API to perform authentication.
+ * @param email - User's email address.
+ * @param password - User's password.
+ * @returns A promise that resolves to the access token and user data.
+ * @throws Will throw an error if authentication fails.
+ */
+export async function authenticateUser(email: string, password: string): Promise<{ accessToken: string; user: User }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/login/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.message || 'Login failed');
+    }
+
+    const data: LoginResponse = await response.json();
+    const accessToken = data.access_token; // Ensure the external API returns 'access_token'
+    const user = data.user; // Assuming the external API returns user data in 'user' field
+
+    if (!accessToken || !user) {
+      throw new Error('Invalid response from external API');
+    }
+
+    return { accessToken, user };
+  } catch (error) {
+    console.error(`Login failed: ${(error as Error).message}`);
+    throw new Error('Authentication failed');
+  }
+}
+
+/**
+ * Registers a new user by communicating with the external API.
+ * @param email - New user's email address.
+ * @param password - New user's password.
+ * @returns A promise that resolves to the new user's ID.
+ * @throws Will throw an error if signup fails.
+ */
+export async function createUser(email: string, password: string): Promise<string> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/signup/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.message || 'Signup failed');
+    }
+
+    const data = await response.json();
+    return data.user_id; // Ensure the external API returns 'user_id'
+  } catch (error) {
+    console.error(`Signup failed: ${(error as Error).message}`);
+    throw new Error('Signup failed');
+  }
+}
+
+/**
+ * Generates a JWT token for a given user.
+ * Utilizes the 'jose' library to sign the token securely.
+ * @param user - The user object containing necessary information.
+ * @returns A promise that resolves to the signed JWT token string.
+ * @throws Will throw an error if token generation fails.
+ */
+export async function generateToken(user: User): Promise<string> {
+  try {
+    const token = await new SignJWT({
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      // Add other user properties as needed
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime('1h') // Token expires in 1 hour
+      .sign(AUTH_SECRET);
+    return token;
+  } catch (error) {
+    console.error(`Token generation failed: ${(error as Error).message}`);
+    throw new Error('Token generation failed');
+  }
+}
+
+/**
+ * Verifies a JWT token to ensure it's valid and not tampered with.
+ * Utilizes the 'jose' library for verification.
+ * @param token - The JWT token string to verify.
+ * @returns A promise that resolves to the decoded user object if valid, otherwise null.
+ */
+export async function verifyToken(token: string): Promise<User | null> {
+  try {
+    const { payload } = await jwtVerify(token, AUTH_SECRET);
+    return payload as unknown as User; // Cast payload to User type
+  } catch (error) {
+    console.error(`Token verification failed: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * Fetches user data from the external API using the provided access token.
+ * @param accessToken - The access token from the external API.
+ * @returns A promise that resolves to the user data.
+ * @throws Will throw an error if fetching user data fails.
+ */
+export async function fetchUserData(accessToken: string): Promise<User> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/me/`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.message || 'Failed to fetch user data');
+    }
+
+    const data = await response.json();
+    return data as User; // Adjust the type as needed
+  } catch (error) {
+    console.error(`Failed to fetch user data: ${(error as Error).message}`);
+    throw new Error('Failed to fetch user data');
+  }
+}
+
+/**
+ * Refreshes an existing authentication token by communicating with the external API.
+ * @param oldToken - The current JWT access token.
+ * @returns A promise that resolves to the new JWT access token string or null if refresh fails.
+ */
+export async function refreshAuthToken(oldToken: string): Promise<string | null> {
+  try {
+    const response = await makeAuthenticatedRequest<{ token: string }>(
+      '/auth/refresh/',
+      oldToken,
+      {
+        method: 'POST',
+      }
+    );
+
+    if (response && response.data && typeof response.data.token === 'string') {
+      return response.data.token;
+    } else {
+      console.error('Invalid response format from /auth/refresh/:', response);
+      return null;
+    }
+  } catch (error) {
+    console.error(`Token refresh failed: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/lib/auth.types.ts ---
+
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/lib/getUserFromRequest.ts ---
+
+// src/lib/getUserFromRequest.ts
+
+export function getUserFromRequest(request: Request) {
+    const userId = request.headers.get('x-user-id');
+    const userEmail = request.headers.get('x-user-email');
+    const accessToken = request.headers.get('x-access-token');
+  
+    if (!userId || !userEmail || !accessToken) {
+      throw new Error('User information is missing');
+    }
+  
+    return { userId, userEmail, accessToken };
+  }
+  
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/middleware.ts ---
+
+// middleware.ts
+
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { verifyToken } from '@/lib/auth';
+
+export async function middleware(req: NextRequest) {
+  const token = req.cookies.get(process.env.COOKIE_NAME || 'auth_token')?.value;
+
+  if (!token) {
+    console.warn(`Unauthorized access attempt to ${req.nextUrl.pathname}`);
+    return NextResponse.redirect(new URL('/login', req.url));
+  }
+
+  const user = await verifyToken(token);
+  if (!user) {
+    console.warn(`Invalid token for access to ${req.nextUrl.pathname}`);
+    return NextResponse.redirect(new URL('/login', req.url));
+  }
+
+  const response = NextResponse.next();
+  response.headers.set('x-user-id', user.id);
+
+  return response;
+}
+
+export const config = {
+  matcher: [
+    '/dashboard/:path*',
+    '/publications/:path*',
+    '/api/protected-route/:path*',
+  ],
+};
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/types/common.ts ---
+
+
+
+--- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/types/external-api.ts ---
+
+

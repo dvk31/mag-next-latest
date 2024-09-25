@@ -1,0 +1,22 @@
+// src/lib/logger.ts
+import { createLogger, format, transports } from 'winston';
+
+const { combine, timestamp, printf, errors } = format;
+
+const customFormat = printf(({ level, message, timestamp, stack }) => {
+  return `${timestamp} [${level}]: ${stack || message}`;
+});
+
+const logger = createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: combine(
+    timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    errors({ stack: true }),
+    customFormat
+  ),
+  transports: [
+    new transports.Console(),
+  ],
+});
+
+export default logger;
