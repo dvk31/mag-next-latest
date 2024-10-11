@@ -1,0 +1,118 @@
+// src/context/MagazineContext.tsx
+
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { Magazine } from '@/types/supabase'; // Ensure this path is correct
+import axios from 'axios';
+
+// Define the shape of the context
+interface MagazineContextType {
+  magazines: Magazine[];
+  loading: boolean;
+  error: string | null;
+  fetchMagazines: () => Promise<void>;
+  createMagazine: (newMagazine: Partial<Magazine>) => Promise<void>;
+  updateMagazine: (id: string, updatedMagazine: Partial<Magazine>) => Promise<void>;
+  deleteMagazine: (id: string) => Promise<void>;
+}
+
+// Initialize the context with default values
+const MagazineContext = createContext<MagazineContextType | undefined>(undefined);
+
+// Custom hook to use the MagazineContext
+export const useMagazineContext = (): MagazineContextType => {
+  const context = useContext(MagazineContext);
+  if (!context) {
+    throw new Error('useMagazineContext must be used within a MagazineProvider');
+  }
+  return context;
+};
+
+// Provider component
+export const MagazineProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [magazines, setMagazines] = useState<Magazine[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch all magazines for the authenticated user
+  const fetchMagazines = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await axios.get<Magazine[]>('/magazines');
+      setMagazines(response.data);
+    } catch (err: any) {
+      console.error('Error fetching magazines:', err);
+      setError(err.response?.data?.error || 'Failed to fetch magazines');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Create a new magazine
+  const createMagazine = async (newMagazine: Partial<Magazine>) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await axios.post<Magazine>('/magazines', newMagazine);
+      setMagazines((prev) => [response.data, ...prev]);
+    } catch (err: any) {
+      console.error('Error creating magazine:', err);
+      setError(err.response?.data?.error || 'Failed to create magazine');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Update an existing magazine
+  const updateMagazine = async (id: string, updatedMagazine: Partial<Magazine>) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await axios.put<Magazine>(`/magazines?id=${id}`, updatedMagazine);
+      setMagazines((prev) =>
+        prev.map((mag) => (mag.id === id ? response.data : mag))
+      );
+    } catch (err: any) {
+      console.error('Error updating magazine:', err);
+      setError(err.response?.data?.error || 'Failed to update magazine');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Delete a magazine
+  const deleteMagazine = async (id: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      await axios.delete(`/magazines?id=${id}`);
+      setMagazines((prev) => prev.filter((mag) => mag.id !== id));
+    } catch (err: any) {
+      console.error('Error deleting magazine:', err);
+      setError(err.response?.data?.error || 'Failed to delete magazine');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Optionally, fetch magazines on mount
+  useEffect(() => {
+    fetchMagazines();
+  }, []);
+
+  return (
+    <MagazineContext.Provider
+      value={{
+        magazines,
+        loading,
+        error,
+        fetchMagazines,
+        createMagazine,
+        updateMagazine,
+        deleteMagazine,
+      }}
+    >
+      {children}
+    </MagazineContext.Provider>
+  );
+};

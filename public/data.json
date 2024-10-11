@@ -1,0 +1,171 @@
+{
+    "coverPage": {
+      "title": "Magazenie: Airbnb Host Edition",
+      "backgroundImage": {
+        "url": "https://xpbhgjbwobrhnzxzggvz.supabase.co/storage/v1/object/public/publicimage/image_fx_%20(1).jpg",
+        "alt": "Luxurious coastal background of Malibu"
+      },
+      "qrCode": {
+        "url": "https://xpbhgjbwobrhnzxzggvz.supabase.co/storage/v1/object/public/publicimage/QR_code_for_mobile_English_Wikipedia.svg.png",
+        "alt": "QR code for instant booking",
+        "position": {
+          "top": "50%",
+          "left": "50%",
+          "transform": "translate(-50%, -50%)"
+        },
+        "width": "200px",
+        "caption": "Scan Me!"
+      },
+      "icons": [
+        {
+          "type": "wifi",
+          "iconClass": "fas fa-wifi",
+          "alt": "Wi-Fi icon",
+          "position": {
+            "bottom": "30px",
+            "left": "40px"
+          },
+          "width": "24px"
+        },
+        {
+          "type": "bed",
+          "iconClass": "fas fa-bed",
+          "alt": "King bed icon",
+          "position": {
+            "bottom": "30px",
+            "left": "74px"
+          },
+          "width": "24px"
+        },
+        {
+          "type": "kitchenette",
+          "iconClass": "fas fa-utensils",
+          "alt": "Kitchenette icon",
+          "position": {
+            "bottom": "30px",
+            "left": "108px"
+          },
+          "width": "24px"
+        }
+      ],
+      "badge": {
+        "content": "Malibu Guide Inside!",
+        "backgroundImage": "https://example.com/badge-background.png",
+        "position": {
+          "top": "40px",
+          "right": "40px"
+        },
+        "width": "120px",
+        "height": "120px",
+        "font": {
+          "family": "Arial, sans-serif",
+          "size": "14px",
+          "weight": "bold",
+          "style": "normal"
+        },
+        "color": "#ffffff",
+        "backgroundColor": "rgba(0, 0, 0, 0.5)",
+        "borderRadius": "50%",
+        "transform": "rotate(-15deg)",
+        "boxShadow": "0 4px 6px rgba(0, 0, 0, 0.1)",
+        "padding": "10px",
+        "textAlign": "center",
+        "display": "flex",
+        "alignItems": "center",
+        "justifyContent": "center"
+      },
+      "magazineTitle": {
+        "text": "Magazenie",
+        "subText": "Airbnb Host Edition",
+        "font": {
+          "family": "Arial, sans-serif",
+          "size": "68px",
+          "weight": "bold",
+          "style": "normal"
+        },
+        "subFont": {
+          "family": "Georgia, serif",
+          "size": "24px",
+          "weight": "normal",
+          "style": "italic"
+        },
+        "color": "#ffffff",
+        "subColor": "#e0e0e0",
+        "position": {
+          "top": "20px",
+          "left": "20px"
+        },
+        "spacing": "10px"
+      },
+      "textElements": [
+        {
+          "content": "Welcome to",
+          "font": {
+            "family": "Verdana, sans-serif",
+            "size": "24px",
+            "weight": "normal",
+            "style": "normal"
+          },
+          "position": {
+            "top": "200px",
+            "left": "40px"
+          },
+          "color": "#ffffff",
+          "textAlign": "left",
+          "zIndex": 10
+        },
+        {
+          "content": "SUNSET BEACH RETREAT",
+          "font": {
+            "family": "Arial, sans-serif",
+            "size": "48px",
+            "weight": "bold",
+            "style": "normal",
+            "letterSpacing": "2px"
+          },
+          "position": {
+            "top": "230px",
+            "left": "40px"
+          },
+          "color": "#ffdd00",
+          "textAlign": "left",
+          "zIndex": 10
+        },
+        {
+          "content": "Your Home Away From Home",
+          "font": {
+            "family": "Georgia, serif",
+            "size": "20px",
+            "weight": "normal",
+            "style": "italic"
+          },
+          "position": {
+            "top": "290px",
+            "left": "40px"
+          },
+          "color": "#ffffff",
+          "textAlign": "left",
+          "maxWidth": "300px",
+          "zIndex": 10
+        },
+        {
+          "content": "4.9 SUPERHOST",
+          "font": {
+            "family": "Arial, sans-serif",
+            "size": "24px",
+            "weight": "bold",
+            "style": "normal"
+          },
+          "position": {
+            "bottom": "100px",
+            "left": "40px"
+          },
+          "color": "#ffffff",
+          "backgroundColor": "rgba(0, 0, 0, 0.5)",
+          "padding": "10px 20px",
+          "borderRadius": "5px",
+          "zIndex": 10
+        }
+      ]
+    }
+  }

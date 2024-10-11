@@ -1,0 +1,1496 @@
+
+--- File: app/api/auth/login/route.ts ---
+
+// src/app/api/auth/login/route.ts
+
+import { NextResponse } from 'next/server';
+import { authenticateUser, generateToken, fetchUserData } from '@/lib/auth';
+
+const COOKIE_NAME = process.env.COOKIE_NAME || 'auth_token';
+
+export async function POST(request: Request) {
+  try {
+    const { email, password } = await request.json();
+
+    if (!email || !password) {
+      console.warn('Login attempt with missing credentials');
+      return NextResponse.json(
+        { success: false, message: 'Email and password are required' },
+        { status: 400 }
+      );
+    }
+
+    // Authenticate user with external API
+    const { accessToken } = await authenticateUser(email, password);
+
+    // Fetch user data using the access token
+    const user = await fetchUserData(accessToken);
+
+    // Generate a JWT for your application
+    const appToken = await generateToken(user);
+
+    // Create a response and set the auth_token and external_access_token cookies
+    const response = NextResponse.json({ success: true, message: 'Login successful' });
+
+    // Set the internal auth_token cookie
+    response.cookies.set(COOKIE_NAME, appToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 60 * 60, // 1 hour
+      path: '/',
+    });
+
+    // Set the external access_token cookie
+    response.cookies.set('external_access_token', accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 60 * 60, // Adjust based on the token's expiry
+      path: '/',
+    });
+
+    console.log(`User ${email} logged in successfully`);
+    return response;
+  } catch (error) {
+    console.error(`Login failed: ${(error as Error).message}`);
+    return NextResponse.json(
+      { success: false, message: error.message || 'Authentication failed' },
+      { status: 401 }
+    );
+  }
+}
+
+
+--- File: app/api/auth/logout/route.ts ---
+
+// src/app/api/auth/logout/route.ts
+
+import { NextResponse } from 'next/server';
+import { serialize } from 'cookie';
+
+export async function POST(request: Request) {
+  try {
+    const response = NextResponse.json({ message: 'Logged out successfully' });
+
+    response.headers.append('Set-Cookie', serialize(process.env.COOKIE_NAME || 'auth_token', '', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      expires: new Date(0),
+      path: '/',
+    }));
+
+    console.log('User logged out successfully');
+    return response;
+  } catch (error) {
+    console.error(`Logout failed: ${(error as Error).message}`);
+    return NextResponse.json(
+      { message: 'Logout failed' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- File: app/api/auth/signup/route.ts ---
+
+// src/app/api/auth/signup/route.ts
+
+import { NextResponse } from 'next/server';
+import { createUser } from '../../../../lib/auth';
+import { SignupResponse } from '../../../../lib/api.types';
+
+export async function POST(request: Request) {
+  try {
+    const { email, password } = await request.json();
+
+    if (!email || !password) {
+      console.warn('Signup attempt with missing credentials');
+      return NextResponse.json(
+        { message: 'Email and password are required' },
+        { status: 400 }
+      );
+    }
+
+    const userId = await createUser(email, password);
+
+    console.log(`User ${email} signed up successfully with ID ${userId}`);
+    return NextResponse.json(
+      { message: 'User created successfully', user_id: userId },
+      { status: 201 }
+    );
+  } catch (error) {
+    console.error(`Signup failed: ${(error as Error).message}`);
+    return NextResponse.json(
+      { message: (error as Error).message || 'User creation failed' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- File: app/api/auth/token_refresh/route.ts ---
+
+// src/app/api/auth/refresh-token/route.ts
+
+import { NextResponse } from 'next/server';
+import { verifyToken, generateToken } from '@/lib/auth';
+import { parse } from 'cookie';
+const COOKIE_NAME = process.env.COOKIE_NAME || 'auth_token'; // Added COOKIE_NAME
+
+export async function POST(request: Request) {
+  try {
+    const cookieHeader = request.headers.get('cookie');
+    if (!cookieHeader) {
+      console.warn('No cookies found in the request');
+      return NextResponse.json({ success: false, message: 'No refresh token provided' }, { status: 401 });
+    }
+
+    const cookies = parse(cookieHeader);
+    const oldToken = cookies[COOKIE_NAME];
+
+    if (!oldToken) {
+      console.warn('No refresh token found');
+      return NextResponse.json({ success: false, message: 'No refresh token provided' }, { status: 401 });
+    }
+
+    const user = await verifyToken(oldToken);
+    if (!user) {
+      console.warn('Invalid refresh token');
+      return NextResponse.json({ success: false, message: 'Invalid refresh token' }, { status: 401 });
+    }
+
+    // Generate a new token
+    const newToken = await generateToken(user);
+
+    // Set the new token in the cookie
+    const response = NextResponse.json({ success: true, message: 'Token refreshed successfully' }, { status: 200 });
+    response.cookies.set(COOKIE_NAME, newToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 60 * 60, // 1 hour
+      path: '/',
+    });
+
+    return response;
+  } catch (error) {
+    console.error(`Token refresh failed: ${(error as Error).message}`);
+    return NextResponse.json({ success: false, message: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+
+--- File: app/api/magazines/route.ts ---
+
+// src/app/api/magazines/route.ts
+
+import { NextResponse } from 'next/server';
+import fs from 'fs/promises';
+import path from 'path';
+import { CoverPageData } from '@/types/coverpage';
+
+export async function GET() {
+  try {
+    const dataFilePath = path.join(process.cwd(), 'public', 'data.json');
+    const fileContents = await fs.readFile(dataFilePath, 'utf8');
+    const data: CoverPageData = JSON.parse(fileContents);
+
+    return NextResponse.json(data);
+  } catch (error) {
+    console.error('Error reading data file:', error);
+    return NextResponse.json({ error: 'Error reading data file' }, { status: 500 });
+  }
+}
+
+--- File: app/api/me/route.ts ---
+
+// src/app/api/me/route.ts
+
+// src/app/api/me/route.ts
+
+import { NextResponse } from 'next/server';
+import { UserResponse } from '@/lib/api.types';
+import { getUserFromRequest } from '@/lib/getUserFromRequest';
+
+export async function GET(request: Request) {
+  try {
+    const { userId, userEmail, accessToken } = getUserFromRequest(request);
+
+    const userResponse: UserResponse = {
+      id: userId,
+      email: userEmail,
+      // Populate other fields as needed
+    };
+
+    return NextResponse.json({ success: true, data: userResponse }, { status: 200 });
+  } catch (error) {
+    console.error(`Fetching user info failed: ${(error as Error).message}`);
+    return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  }
+}
+
+--- File: app/api/publications/route.ts ---
+
+// /app/api/publications/route.ts
+
+import { NextResponse } from 'next/server';
+import { getUserFromRequest } from '@/lib/getUserFromRequest';
+import { makeAuthenticatedRequest } from '@/lib/api';
+import { PublicationsResponse } from '@/lib/api.types';
+
+export async function GET(request: Request) {
+  console.log('Publications Route - Incoming request headers:', Object.fromEntries(request.headers));
+
+  try {
+    const { userId, userEmail, accessToken } = getUserFromRequest(request);
+
+    console.log('Publications Route - Extracted user data:', {
+      userId,
+      userEmail,
+      accessToken: accessToken ? 'present' : 'missing',
+    });
+
+    if (!accessToken) {
+      console.warn('Access token is missing in the request headers');
+      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+    }
+
+    console.log(`Publications Route - About to fetch publications for user: ${userId}`);
+    console.log(`Publications Route - Using access token: ${accessToken.substring(0, 10)}...`);
+
+    try {
+      const publicationsResponse = await makeAuthenticatedRequest<PublicationsResponse>(
+        '/publications/',
+        accessToken
+      );
+      console.log('Publications Route - Successfully fetched publications');
+      console.log('Publications data:', publicationsResponse);
+
+      // Return the publications data directly
+      return NextResponse.json(publicationsResponse, { status: 200 });
+    } catch (error) {
+      console.error(`Publications Route - Fetching publications failed:`, error);
+      return NextResponse.json({ success: false, message: 'Internal Server Error' }, { status: 500 });
+    }
+  } catch (error) {
+    console.error(`Publications Route - An unexpected error occurred:`, error);
+    return NextResponse.json({ success: false, message: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+
+--- File: app/dashboard/layout.tsx ---
+
+// src/app/dashboard/layout.tsx
+
+'use client';
+
+import React from 'react';
+import LogoutButton from '@/components/LogoutButton';
+import { useRouter } from 'next/navigation';
+
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const router = useRouter();
+
+  const handlePublicationClick = () => {
+    router.push('/dashboard/publications');
+   
+  };
+
+  return (
+    <div className="dashboard-layout">
+      <nav>
+        <h2>Dashboard</h2>
+        <button onClick={handlePublicationClick}>Publications</button>
+        <LogoutButton />
+      </nav>
+      <main>{children}</main>
+    </div>
+  );
+}
+
+
+--- File: app/dashboard/page.tsx ---
+
+// src/app/dashboard/page.tsx
+
+import React from 'react';
+
+
+const DashboardPage: React.FC = () => {
+  
+  return (
+    <div className="dashboard-page">
+      <h1>Welcome to your Dashboard!</h1>
+      <p>Select an option from the navigation menu.</p>
+    </div>
+  );
+};
+
+export default DashboardPage;
+
+
+--- File: app/dashboard/publications/page.tsx ---
+
+// src/app/dashboard/publications/page.tsx
+
+import React from 'react';
+import PublicationsList from '@/components/PublicationsList';
+
+
+const PublicationsPage: React.FC = () => {
+
+  return (
+    <div className="publications-page">
+      <PublicationsList />
+    </div>
+  );
+};
+
+export default PublicationsPage;
+
+
+--- File: app/layout.tsx ---
+
+// src/app/layout.tsx
+
+import './globals.css';
+import { AuthProvider } from '@/context/AuthContext';
+
+export const metadata = {
+  title: 'My Next.js App',
+  description: 'A sample application using Next.js 13 App Router',
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+
+  return (
+    <html lang="en">
+      <body>
+        <AuthProvider>
+          {children}
+        </AuthProvider>
+      </body>
+    </html>
+  );
+}
+
+
+--- File: app/login/page.tsx ---
+
+// src/app/login/page.tsx
+
+'use client';
+
+import React, { useState } from 'react';
+import { useAuth } from '@/hooks/useAuth';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+
+const LoginPage: React.FC = () => {
+  const { login } = useAuth();
+  const router = useRouter();
+
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      await login(email, password);
+      console.log(`User ${email} logged in`);
+      router.push('/dashboard');
+    } catch (err) {
+      setError((err as Error).message);
+      console.error(`Login failed for ${email}: ${(err as Error).message}`);
+    }
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-gray-50">
+      <div className="bg-white p-8 rounded-md shadow-md w-full max-w-md">
+        <h1 className="text-2xl font-bold mb-4 text-center">Login</h1>
+        {error && <p className="text-red-500 mb-4 text-center">{error}</p>}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              required
+              className="mt-1 p-2 block w-full border rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              required
+              className="mt-1 p-2 block w-full border rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+            />
+          </div>
+          <button
+            type="submit"
+            className="w-full bg-indigo-600 text-white p-2 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+          >
+            Login
+          </button>
+        </form>
+        <p className="mt-4 text-center text-sm text-gray-500">
+          Don't have an account?{' '}
+          <Link href="/signup" className="text-indigo-600 hover:underline">Sign up here</Link>.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default LoginPage;
+
+
+--- File: app/middleware.ts ---
+
+// middleware.ts
+
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { verifyToken } from '@/lib/auth';
+
+export async function middleware(req: NextRequest) {
+  console.log('Middleware - Incoming request:', req.url);
+
+  const authToken = req.cookies.get(process.env.COOKIE_NAME || 'auth_token')?.value;
+  const externalAccessToken = req.cookies.get('external_access_token')?.value;
+
+  console.log('Middleware - Token from cookie:', authToken);
+
+  if (!authToken) {
+    console.warn(`Unauthorized access attempt to ${req.nextUrl.pathname}`);
+    return NextResponse.redirect(new URL('/login', req.url));
+  }
+
+  try {
+    const user = await verifyToken(authToken);
+    if (!user) {
+      console.warn(`Invalid token for access to ${req.nextUrl.pathname}`);
+      return NextResponse.redirect(new URL('/login', req.url));
+    }
+
+    console.log('Middleware - Verified user:', user);
+
+    // Create a new request with modified headers
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.set('x-user-id', user.id);
+    requestHeaders.set('x-user-email', user.email);
+    requestHeaders.set('x-access-token', externalAccessToken || '');
+    requestHeaders.set('Authorization', `Bearer ${externalAccessToken || ''}`);
+
+    console.log('Middleware - Setting headers:', {
+      'x-user-id': user.id,
+      'x-user-email': user.email,
+      'x-access-token': externalAccessToken ? 'present' : 'missing',
+    });
+
+    // Use rewrite to internally redirect to the API route with the modified headers
+    const response = NextResponse.rewrite(new URL(req.url));
+    response.headers.set('x-user-id', user.id);
+    response.headers.set('x-user-email', user.email);
+    response.headers.set('x-access-token', externalAccessToken || '');
+    response.headers.set('Authorization', `Bearer ${externalAccessToken || ''}`);
+
+    console.log('Middleware - Final response headers:', Object.fromEntries(response.headers));
+
+    return response;
+  } catch (error) {
+    console.error('Middleware - Error processing request:', error);
+    return NextResponse.redirect(new URL('/login', req.url));
+  }
+}
+
+export const config = {
+  matcher: [
+    '/dashboard/:path*',
+    '/api/me',
+    '/api/publications',
+    '/publications/:path*',
+    '/api/protected-route/:path*',
+  ],
+};
+
+
+--- File: app/page.tsx ---
+
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
+
+export default function Home() {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center text-white bg-gradient-to-r from-blue-400 to-purple-500">
+      <h1 className="text-5xl font-bold mb-8">Welcome to Our App</h1>
+      <p className="text-xl mb-8">Experience the future of authentication.</p>
+      <div className="flex gap-4"> {/* Use flexbox for better spacing control */}
+        <Link href="/login"> {/* Wrap Link around Button */}
+          <Button>Login</Button>
+        </Link>
+        <Link href="/register">
+          <Button variant="outline">Register</Button>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+--- File: app/register/page.tsx ---
+
+// src/app/signup/page.tsx
+
+'use client';
+
+import React, { useState } from 'react';
+import { useAuth } from '@/hooks/useAuth';
+import { useRouter } from 'next/navigation';
+
+const SignupPage: React.FC = () => {
+  const { signup } = useAuth();
+  const router = useRouter();
+
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      await signup(email, password);
+      console.log(`User ${email} signed up and logged in`);
+      router.push('/dashboard');
+    } catch (err) {
+      setError((err as Error).message);
+      console.error(`Signup failed for ${email}: ${(err as Error).message}`);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+        <h1 className="text-2xl font-bold mb-4 text-center">Sign Up</h1>
+        {error && <p className="text-red-500 mb-4">{error}</p>}
+        <form onSubmit={handleSignup} className="space-y-4">
+          <div>
+            <label htmlFor="email" className="block text-gray-700 font-medium">Email</label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="mt-1 w-full border rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label htmlFor="password" className="block text-gray-700 font-medium">Password</label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className="mt-1 w-full border rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <button
+            type="submit"
+            className="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+          >
+            Sign Up
+          </button>
+        </form>
+        <p className="text-center mt-4">
+          Already have an account?{' '}
+          <a href="/login" className="text-blue-500 hover:underline">
+            Login here
+          </a>
+          .
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default SignupPage;
+
+
+--- File: context/AuthContext.tsx ---
+
+// src/context/AuthContext.tsx
+
+'use client';
+
+import React, { createContext, useState, useEffect, useCallback } from 'react';
+import { AuthContextType, User } from './AuthContext.types';
+import { makeAuthenticatedRequest } from '../lib/api';
+
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+
+  // Fetch user data
+  const fetchUser = useCallback(async () => {
+    try {
+      const response = await fetch('/api/me/', {
+        method: 'GET',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        setUser(null);
+        return;
+      }
+
+      const data: User = await response.json();
+      setUser(data);
+    } catch (error) {
+        console.error(`Failed to fetch user: ${(error as Error).message}`);
+      setUser(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUser();
+  }, [fetchUser]);
+
+  // Login function
+  const login = async (email: string, password: string) => {
+    try {
+      const res = await fetch('/api/auth/login/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email, password }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || 'Login failed');
+      }
+
+      await fetchUser();
+    } catch (error) {
+      console.error(`Login error: ${(error as Error).message}`);
+      throw error;
+    }
+  };
+
+  // Logout function
+  const logout = async () => {
+    try {
+      const res = await fetch('/api/auth/logout/', {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || 'Logout failed');
+      }
+
+      setUser(null);
+    } catch (error) {
+      console.error(`Logout error: ${(error as Error).message}`);
+      throw error;
+    }
+  };
+
+  // Signup function
+  const signup = async (email: string, password: string) => {
+    try {
+      const res = await fetch('/api/auth/signup/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        const errorMessage = errorData.message || 'Signup failed';
+        console.error(`Signup error: ${errorMessage}`, errorData); // Log detailed error information
+        throw new Error(errorMessage);
+      }
+
+      // Optionally, log the user in after signup
+      await login(email, password);
+    } catch (error) {
+      console.error(`Signup error: ${(error as Error).message}`);
+      throw error;
+    }
+  };
+
+  // Refresh token function
+  const refreshToken = async () => {
+    try {
+      const res = await fetch('/api/auth/token_refresh/', {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        throw new Error('Token refresh failed');
+      }
+
+      await fetchUser();
+    } catch (error) {
+      console.error(`Refresh token error: ${(error as Error).message}`);
+      setUser(null);
+    }
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, login, logout, signup, refreshToken }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+
+--- File: context/AuthContext.types.ts ---
+
+// src/context/AuthContext.types.ts
+
+export interface UserProfile {
+    bio: string;
+    birth_date: string | null;
+    location: string;
+  }
+  
+  export interface User {
+    id: string;
+    email: string;
+    username: string;
+    is_staff: boolean;
+    is_active: boolean;
+    date_joined: string;
+    profile: UserProfile;
+  }
+  
+  export interface AuthContextType {
+    user: User | null;
+    login: (email: string, password: string) => Promise<void>;
+    logout: () => Promise<void>;
+    signup: (email: string, password: string) => Promise<void>;
+    refreshToken: () => Promise<void>;
+  }
+  
+
+--- File: context/MediaContext.tsx ---
+
+// src/contexts/MediaAssetContext.tsx
+
+import api from '@/lib/api';
+
+// Ensure this function is exported
+export const uploadMediaAsset = async (file: File, assetType: string) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('asset_type', assetType);
+
+  const response = await api.post('media-assets/', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+
+
+--- File: hooks/useAuth.ts ---
+
+// src/hooks/useAuth.ts
+
+import { useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
+import { AuthContextType } from '../context/AuthContext.types';
+
+export const useAuth = (): AuthContextType => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+
+
+--- File: hooks/useAuth.types.ts ---
+
+
+
+--- File: lib/api.ts ---
+
+// src/lib/api.ts
+
+
+const API_BASE_URL = process.env.EXTERNAL_API_BASE_URL || 'https://dev.withgpt.com/api';
+
+import { ApiResponse } from './api.types';
+
+// src/lib/api.ts
+
+// src/lib/api.ts
+
+export async function makeAuthenticatedRequest<T>(
+    endpoint: string,
+    accessToken: string,
+    options: RequestInit = {}
+  ): Promise<ApiResponse<T>> {
+    try {
+      const url = `${API_BASE_URL}${endpoint}`;
+      console.log(`Making authenticated request to: ${url}`);
+  
+      // Exclude 'Authorization' and 'authorization' from options.headers
+      const { Authorization, authorization, ...otherHeaders } = options.headers || {};
+  
+      // Create a Headers object and set headers explicitly
+      const headers = new Headers(otherHeaders);
+      headers.set('Content-Type', 'application/json');
+      headers.set('Authorization', `Bearer ${accessToken}`);
+  
+      // Log the headers being sent
+      console.log('Request headers:', Object.fromEntries(headers));
+  
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        // Remove 'credentials: include' as it's unnecessary for server-side requests
+      });
+  
+      console.log(`Response status: ${response.status}`);
+  
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Error response:', errorData);
+        throw new Error(errorData.message || `Request failed with status ${response.status}`);
+      }
+  
+      const data = await response.json();
+      console.log('Successful response data:', data);
+      return data as ApiResponse<T>;
+    } catch (error) {
+      console.error('Authenticated request failed:', error);
+      throw error;
+    }
+  }
+  
+
+--- File: lib/api.types.ts ---
+
+  // src/lib/api.types.ts
+  
+  export interface ApiResponse<T> {
+    data: T;
+  }
+  
+  export interface ApiError {
+    message: string;
+  }
+  
+  // Define specific response types as needed
+  export interface LoginResponse {
+    message: string;
+    id: string;
+    username: string;
+    email: string;
+    full_name: string | null;
+    access_token: string;
+    refresh_token: string;
+  }
+  
+  export interface SignupResponse {
+    message: string;
+    user_id: string;
+  }
+  
+  export interface UserResponse {
+    id: string;
+    email: string;
+    username: string;
+    is_staff: boolean;
+    is_active: boolean;
+    date_joined: string;
+    profile: {
+      bio: string;
+      birth_date: string | null;
+      location: string;
+    };
+  }
+  
+  export interface Publication {
+    id: string;
+    name: string;
+    publication_type: string;
+    description: string;
+    privacy: string;
+    logo: {
+      id: string;
+      file: string;
+    } | null;
+    cover_image: {
+      id: string;
+      file: string;
+    } | null;
+    publication_video: string | null;
+    created_by: {
+      id: string;
+      email: string;
+    };
+    members: Array<{
+      id: string;
+      user: {
+        id: string;
+        email: string;
+      };
+    }>;
+  }
+  
+  export type PublicationsResponse = Publication[];
+  
+
+--- File: lib/auth.ts ---
+
+// src/lib/auth.ts
+
+import { SignJWT, jwtVerify } from 'jose';
+import { ApiResponse, LoginResponse } from './api.types';
+import { User } from '../context/AuthContext.types';
+
+// ------------------------
+// Configuration Constants
+// ------------------------
+
+// Secret key for signing and verifying JWTs.
+// Ensure this is a strong, random string in production environments.
+// It's recommended to store this in environment variables.
+const AUTH_SECRET = new TextEncoder().encode(process.env.AUTH_SECRET || 'default-secret');
+
+// Name of the authentication cookie.
+// Can be customized via environment variables.
+const COOKIE_NAME = process.env.COOKIE_NAME || 'auth_token';
+
+// Base URL for the external API your application interacts with.
+// Ensure this is correctly set in your environment variables.
+const API_BASE_URL = process.env.EXTERNAL_API_BASE_URL || 'https://dev.withgpt.com/api';
+
+// ------------------------
+// Helper Functions
+// ------------------------
+
+/**
+ * Makes an authenticated request to the external API.
+ * @param endpoint - The API endpoint to interact with.
+ * @param accessToken - The JWT access token for authentication.
+ * @param options - Additional fetch options.
+ * @returns The parsed JSON response from the API.
+ * @throws Will throw an error if the request fails.
+ */
+export async function makeAuthenticatedRequest<T>(
+  endpoint: string,
+  accessToken: string,
+  options: RequestInit = {}
+): Promise<ApiResponse<T>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+        ...(options.headers || {}),
+      },
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Request failed');
+    }
+
+    const data = await response.json();
+    return { data } as ApiResponse<T>;
+  } catch (error) {
+    console.error('Authenticated request failed:', error);
+    throw error;
+  }
+}
+
+// ------------------------
+// Authentication Functions
+// ------------------------
+
+/**
+ * Authenticates a user by verifying their email and password.
+ * Communicates with the external API to perform authentication.
+ * @param email - User's email address.
+ * @param password - User's password.
+ * @returns A promise that resolves to the access token and user data.
+ * @throws Will throw an error if authentication fails.
+ */
+export async function authenticateUser(email: string, password: string): Promise<{ accessToken: string; user: User }> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/login/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+  
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.message || 'Login failed');
+      }
+  
+      const data: LoginResponse = await response.json();
+      const accessToken = data.access_token;
+  
+      // Create a user object from the response data
+      const user: User = {
+        id: data.id,
+        email: data.email,
+        username: data.username,
+        // Add other user properties as needed
+      };
+  
+      if (!accessToken) {
+        throw new Error('Access token not found in response');
+      }
+  
+      return { accessToken, user };
+    } catch (error) {
+      console.error(`Login failed: ${(error as Error).message}`);
+      throw new Error('Authentication failed');
+    }
+  }
+/**
+ * Registers a new user by communicating with the external API.
+ * @param email - New user's email address.
+ * @param password - New user's password.
+ * @returns A promise that resolves to the new user's ID.
+ * @throws Will throw an error if signup fails.
+ */
+export async function createUser(email: string, password: string): Promise<string> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/signup/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.message || 'Signup failed');
+    }
+
+    const data = await response.json();
+    return data.user_id; // Ensure the external API returns 'user_id'
+  } catch (error) {
+    console.error(`Signup failed: ${(error as Error).message}`);
+    throw new Error('Signup failed');
+  }
+}
+
+/**
+ * Generates a JWT token for a given user.
+ * Utilizes the 'jose' library to sign the token securely.
+ * @param user - The user object containing necessary information.
+ * @returns A promise that resolves to the signed JWT token string.
+ * @throws Will throw an error if token generation fails.
+ */
+export async function generateToken(user: User): Promise<string> {
+  try {
+    const token = await new SignJWT({
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      // Add other user properties as needed
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime('1h') // Token expires in 1 hour
+      .sign(AUTH_SECRET);
+    return token;
+  } catch (error) {
+    console.error(`Token generation failed: ${(error as Error).message}`);
+    throw new Error('Token generation failed');
+  }
+}
+
+/**
+ * Verifies a JWT token to ensure it's valid and not tampered with.
+ * Utilizes the 'jose' library for verification.
+ * @param token - The JWT token string to verify.
+ * @returns A promise that resolves to the decoded user object if valid, otherwise null.
+ */
+export async function verifyToken(token: string): Promise<User | null> {
+  try {
+    const { payload } = await jwtVerify(token, AUTH_SECRET);
+    return payload as unknown as User; // Cast payload to User type
+  } catch (error) {
+    console.error(`Token verification failed: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * Fetches user data from the external API using the provided access token.
+ * @param accessToken - The access token from the external API.
+ * @returns A promise that resolves to the user data.
+ * @throws Will throw an error if fetching user data fails.
+ */
+export async function fetchUserData(accessToken: string): Promise<User> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/me/`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.message || 'Failed to fetch user data');
+    }
+
+    const data = await response.json();
+    return data as User; // Adjust the type as needed
+  } catch (error) {
+    console.error(`Failed to fetch user data: ${(error as Error).message}`);
+    throw new Error('Failed to fetch user data');
+  }
+}
+
+/**
+ * Refreshes an existing authentication token by communicating with the external API.
+ * @param oldToken - The current JWT access token.
+ * @returns A promise that resolves to the new JWT access token string or null if refresh fails.
+ */
+export async function refreshAuthToken(oldToken: string): Promise<string | null> {
+  try {
+    const response = await makeAuthenticatedRequest<{ token: string }>(
+      '/auth/refresh/',
+      oldToken,
+      {
+        method: 'POST',
+      }
+    );
+
+    if (response && response.data && typeof response.data.token === 'string') {
+      return response.data.token;
+    } else {
+      console.error('Invalid response format from /auth/refresh/:', response);
+      return null;
+    }
+  } catch (error) {
+    console.error(`Token refresh failed: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+
+--- File: lib/auth.types.ts ---
+
+
+
+--- File: lib/getUserFromRequest.ts ---
+
+// src/lib/getUserFromRequest.ts
+
+export function getUserFromRequest(request: Request) {
+    const userId = request.headers.get('x-user-id');
+    const userEmail = request.headers.get('x-user-email');
+    const accessToken = request.headers.get('x-access-token');
+  
+    console.log('getUserFromRequest - Extracted data:', {
+      userId,
+      userEmail,
+      accessToken: accessToken ? 'present' : 'missing',
+    });
+  
+    return { userId, userEmail, accessToken };
+  }
+  
+
+--- File: lib/utils.ts ---
+
+import { type ClassValue, clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
+
+
+--- File: middleware.ts ---
+
+// middleware.ts
+
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { verifyToken } from '@/lib/auth';
+
+export async function middleware(req: NextRequest) {
+    console.log('Middleware - Incoming request:', req.url);
+
+    const authToken = req.cookies.get(process.env.COOKIE_NAME || 'auth_token')?.value;
+    const externalAccessToken = req.cookies.get('external_access_token')?.value;
+
+    console.log('Middleware - Token from cookie:', authToken);
+    console.log('Middleware - External access token from cookie:', externalAccessToken);
+
+    if (!authToken) {
+        console.warn(`Unauthorized access attempt to ${req.nextUrl.pathname}`);
+        return NextResponse.redirect(new URL('/login', req.url));
+    }
+
+    try {
+        const user = await verifyToken(authToken);
+        if (!user) {
+            console.warn(`Invalid token for access to ${req.nextUrl.pathname}`);
+            return NextResponse.redirect(new URL('/login', req.url));
+        }
+
+        console.log('Middleware - Verified user:', user);
+
+        // Create a new request with modified headers
+        const requestHeaders = new Headers(req.headers);
+        requestHeaders.set('x-user-id', user.id);
+        requestHeaders.set('x-user-email', user.email);
+        requestHeaders.set('x-access-token', externalAccessToken || ''); // Use external access token if available
+
+        console.log('Middleware - Setting headers:', {
+            'x-user-id': user.id,
+            'x-user-email': user.email,
+            'x-access-token': externalAccessToken || ''
+        });
+
+        // Use rewrite to internally redirect to the API route with the modified headers
+        const response = NextResponse.rewrite(new URL(req.url));
+        response.headers.set('x-user-id', user.id);
+        response.headers.set('x-user-email', user.email);
+        response.headers.set('x-access-token', externalAccessToken || '');
+        response.headers.set('Authorization', `Bearer ${externalAccessToken || ''}`);
+
+
+        console.log('Middleware - Final response headers:', Object.fromEntries(response.headers));
+
+        return response;
+    } catch (error) {
+        console.error('Middleware - Error processing request:', error);
+        return NextResponse.redirect(new URL('/login', req.url));
+    }
+}
+
+export const config = {
+    matcher: [
+      '/dashboard/:path*',
+      '/api/me',
+      '/api/publications',
+      '/publications/:path*',
+      '/api/protected-route/:path*',
+    ],
+};
+
+--- File: types/common.ts ---
+
+
+
+--- File: types/coverpage.ts ---
+
+interface Position {
+    top?: string;
+    bottom?: string;
+    left?: string;
+    right?: string;
+  }
+  
+  interface Font {
+    family: string;
+    size: string;
+    weight: string;
+    style: string;
+    lineHeight?: string;
+    letterSpacing?: string;
+    textTransform?: string;
+  }
+  
+  interface ImageElement {
+    url: string;
+    alt: string;
+    position: { top: string; left: string };
+    width: string;
+  }
+  
+  interface TextElement {
+    content: string;
+    font: Font;
+    position: Position;
+    color: string;
+    backgroundColor?: string;
+    padding?: string;
+    margin?: string;
+    transform?: string;
+    textAlign?: 'left' | 'center' | 'right' | 'justify';
+    zIndex?: number;
+    opacity?: number;
+    maxWidth?: string;
+  }
+  
+  interface Icon {
+    type: string;
+    iconClass: string;
+    alt: string;
+    position: Position;
+    width: string;
+  }
+  
+  export interface CoverPageData {
+    coverPage: {
+      title: string;
+      backgroundImage: {
+        url: string;
+        alt: string;
+      };
+      magazenieLogo: ImageElement;
+      featuredImage: ImageElement & {
+        height: string;
+      };
+      qrCode: {
+        url: string;
+        alt: string;
+        position: {
+          top: string;
+          left: string;
+          transform: string;
+        };
+        width: string;
+        caption: string;
+      };
+      textElements: TextElement[];
+      icons: Icon[];
+      badge: {
+        content: string;
+        backgroundImage?: string;
+        position: Position;
+        width: string;
+        height: string;
+        font: Font;
+        color: string;
+        backgroundColor?: string;
+        borderRadius?: string;
+        transform?: string;
+        boxShadow?: string;
+        padding?: string;
+        textAlign?: 'left' | 'center' | 'right' | 'justify';
+        display?: string;
+        alignItems?: string;
+        justifyContent?: string;
+        zIndex?: number;
+        opacity?: number;
+      };
+      magazineTitle: {
+        text: string;
+        subText: string;
+        font: Font;
+        subFont: Font;
+        color: string;
+        subColor: string;
+        position: Position;
+        spacing: string;
+        textAlign?: 'left' | 'center' | 'right' | 'justify';
+        zIndex?: number;
+        opacity?: number;
+      };
+    };
+  }
+  
+  export interface CoverPageProps {
+    coverPage: CoverPageData['coverPage'];
+  }
+
+--- File: types/external-api.ts ---
+
+
+
+--- File: types/publication.ts ---
+
+// src/types/publication.d.ts
+
+export type PublicationType = 'magazine' | 'book' | 'newspaper' | 'brochure';
+export type PrivacyType = 'private' | 'community';
+
+export interface Publication {
+  id: string;
+  name: string;
+  publication_type: PublicationType;
+  description?: string;
+  privacy: PrivacyType;
+  logo?: string | null;
+  cover_image?: string | null;
+  publication_video?: string | null;
+  created_by: {
+    id: string;
+    email: string;
+  };
+  members: Array<{
+    id: string;
+    user: {
+      id: string;
+      email: string;
+    };
+  }>;
+}
+
+export interface CreatePublicationInput {
+  name: string;
+  publication_type: PublicationType;
+  description?: string;
+  privacy?: PrivacyType;
+  logo?: string;
+  cover_image?: string;
+  publication_video?: string;
+  member_ids?: string[];
+  [key: string]: File | string | null; 
+}
+
+export interface PublicationsContextType {
+  publications: Publication[];
+  createPublication: (input: CreatePublicationInput) => Promise<Publication>;
+  fetchPublications: () => Promise<void>;
+  fetchPublicationById: (id: string) => Promise<Publication>;
+  loading: boolean;
+  error: string | null;
+  currentPublication: Publication | null;
+}
+
+
+export interface Media {
+    id: string;
+    file: string;
+  }
+  

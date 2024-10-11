@@ -1,6 +1,5 @@
-Contents of .ts and .tsx files in src folder:
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/auth/login/route.ts ---
+--- File: api/auth/login/route.ts ---
 
 // src/app/api/auth/login/route.ts
 
@@ -30,14 +29,24 @@ export async function POST(request: Request) {
     // Generate a JWT for your application
     const appToken = await generateToken(user);
 
-    // Create a response and set the auth_token cookie
+    // Create a response and set the auth_token and external_access_token cookies
     const response = NextResponse.json({ success: true, message: 'Login successful' });
 
+    // Set the internal auth_token cookie
     response.cookies.set(COOKIE_NAME, appToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
       maxAge: 60 * 60, // 1 hour
+      path: '/',
+    });
+
+    // Set the external access_token cookie
+    response.cookies.set('external_access_token', accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 60 * 60, // Adjust based on the token's expiry
       path: '/',
     });
 
@@ -53,7 +62,7 @@ export async function POST(request: Request) {
 }
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/auth/logout/route.ts ---
+--- File: api/auth/logout/route.ts ---
 
 // src/app/api/auth/logout/route.ts
 
@@ -84,7 +93,7 @@ export async function POST(request: Request) {
 }
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/auth/signup/route.ts ---
+--- File: api/auth/signup/route.ts ---
 
 // src/app/api/auth/signup/route.ts
 
@@ -121,7 +130,7 @@ export async function POST(request: Request) {
 }
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/auth/token_refresh/route.ts ---
+--- File: api/auth/token_refresh/route.ts ---
 
 // src/app/api/auth/refresh-token/route.ts
 
@@ -173,23 +182,41 @@ export async function POST(request: Request) {
 }
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/me/route.ts ---
+--- File: api/magazines/route.ts ---
+
+// src/app/api/magazines/route.ts
+
+import { NextResponse } from 'next/server';
+import fs from 'fs/promises';
+import path from 'path';
+import { CoverPageData } from '@/types/coverpage';
+
+export async function GET() {
+  try {
+    const dataFilePath = path.join(process.cwd(), 'public', 'data.json');
+    const fileContents = await fs.readFile(dataFilePath, 'utf8');
+    const data: CoverPageData = JSON.parse(fileContents);
+
+    return NextResponse.json(data);
+  } catch (error) {
+    console.error('Error reading data file:', error);
+    return NextResponse.json({ error: 'Error reading data file' }, { status: 500 });
+  }
+}
+
+--- File: api/me/route.ts ---
+
+// src/app/api/me/route.ts
 
 // src/app/api/me/route.ts
 
 import { NextResponse } from 'next/server';
 import { UserResponse } from '@/lib/api.types';
+import { getUserFromRequest } from '@/lib/getUserFromRequest';
 
 export async function GET(request: Request) {
   try {
-    const userId = request.headers.get('x-user-id');
-    const userEmail = request.headers.get('x-user-email');
-    // You can access other user properties if needed
-
-    if (!userId || !userEmail) {
-      console.warn('User information is missing in the request headers');
-      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
-    }
+    const { userId, userEmail, accessToken } = getUserFromRequest(request);
 
     const userResponse: UserResponse = {
       id: userId,
@@ -200,45 +227,61 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, data: userResponse }, { status: 200 });
   } catch (error) {
     console.error(`Fetching user info failed: ${(error as Error).message}`);
+    return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  }
+}
+
+--- File: api/publications/route.ts ---
+
+// /app/api/publications/route.ts
+
+import { NextResponse } from 'next/server';
+import { getUserFromRequest } from '@/lib/getUserFromRequest';
+import { makeAuthenticatedRequest } from '@/lib/api';
+import { PublicationsResponse } from '@/lib/api.types';
+
+export async function GET(request: Request) {
+  console.log('Publications Route - Incoming request headers:', Object.fromEntries(request.headers));
+
+  try {
+    const { userId, userEmail, accessToken } = getUserFromRequest(request);
+
+    console.log('Publications Route - Extracted user data:', {
+      userId,
+      userEmail,
+      accessToken: accessToken ? 'present' : 'missing',
+    });
+
+    if (!accessToken) {
+      console.warn('Access token is missing in the request headers');
+      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+    }
+
+    console.log(`Publications Route - About to fetch publications for user: ${userId}`);
+    console.log(`Publications Route - Using access token: ${accessToken.substring(0, 10)}...`);
+
+    try {
+      const publicationsResponse = await makeAuthenticatedRequest<PublicationsResponse>(
+        '/publications/',
+        accessToken
+      );
+      console.log('Publications Route - Successfully fetched publications');
+      console.log('Publications data:', publicationsResponse);
+
+      // Return the publications data directly
+      return NextResponse.json(publicationsResponse, { status: 200 });
+    } catch (error) {
+      console.error(`Publications Route - Fetching publications failed:`, error);
+      return NextResponse.json({ success: false, message: 'Internal Server Error' }, { status: 500 });
+    }
+  } catch (error) {
+    console.error(`Publications Route - An unexpected error occurred:`, error);
     return NextResponse.json({ success: false, message: 'Internal Server Error' }, { status: 500 });
   }
 }
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/api/publications/route.ts ---
-
-// src/app/api/publications/route.ts
-
-import { NextResponse } from 'next/server';
-import { makeAuthenticatedRequest } from '@/lib/api';
-import { PublicationsResponse } from '@/lib/api.types';
-
-export async function GET(request: Request) {
-  try {
-    const accessToken = request.headers.get('x-access-token');
-
-    if (!accessToken) {
-      console.warn('Access token is missing in the request headers');
-      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
-    }
-
-    const response = await makeAuthenticatedRequest<PublicationsResponse>(
-      '/publications/',
-      accessToken,
-      { method: 'GET' }
-    );
-
-    const data = response.data;
-
-    return NextResponse.json(data, { status: 200 });
-  } catch (error) {
-    console.error(`Fetching publications failed: ${(error as Error).message}`);
-    return NextResponse.json({ message: 'Failed to fetch publications' }, { status: 500 });
-  }
-}
-
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/dashboard/layout.tsx ---
+--- File: dashboard/layout.tsx ---
 
 // src/app/dashboard/layout.tsx
 
@@ -274,7 +317,7 @@ export default function DashboardLayout({
 }
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/dashboard/page.tsx ---
+--- File: dashboard/page.tsx ---
 
 // src/app/dashboard/page.tsx
 
@@ -294,7 +337,7 @@ const DashboardPage: React.FC = () => {
 export default DashboardPage;
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/dashboard/publications/page.tsx ---
+--- File: dashboard/publications/page.tsx ---
 
 // src/app/dashboard/publications/page.tsx
 
@@ -314,7 +357,7 @@ const PublicationsPage: React.FC = () => {
 export default PublicationsPage;
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/layout.tsx ---
+--- File: layout.tsx ---
 
 // src/app/layout.tsx
 
@@ -344,7 +387,7 @@ export default function RootLayout({
 }
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/login/page.tsx ---
+--- File: login/page.tsx ---
 
 // src/app/login/page.tsx
 
@@ -421,7 +464,7 @@ const LoginPage: React.FC = () => {
 export default LoginPage;
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/middleware.ts ---
+--- File: middleware.ts ---
 
 // middleware.ts
 
@@ -430,43 +473,68 @@ import type { NextRequest } from 'next/server';
 import { verifyToken } from '@/lib/auth';
 
 export async function middleware(req: NextRequest) {
-  const token = req.cookies.get(process.env.COOKIE_NAME || 'auth_token')?.value;
+  console.log('Middleware - Incoming request:', req.url);
 
-  if (!token) {
+  const authToken = req.cookies.get(process.env.COOKIE_NAME || 'auth_token')?.value;
+  const externalAccessToken = req.cookies.get('external_access_token')?.value;
+
+  console.log('Middleware - Token from cookie:', authToken);
+
+  if (!authToken) {
     console.warn(`Unauthorized access attempt to ${req.nextUrl.pathname}`);
     return NextResponse.redirect(new URL('/login', req.url));
   }
 
-  const user = await verifyToken(token);
-  if (!user) {
-    console.warn(`Invalid token for access to ${req.nextUrl.pathname}`);
+  try {
+    const user = await verifyToken(authToken);
+    if (!user) {
+      console.warn(`Invalid token for access to ${req.nextUrl.pathname}`);
+      return NextResponse.redirect(new URL('/login', req.url));
+    }
+
+    console.log('Middleware - Verified user:', user);
+
+    // Create a new request with modified headers
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.set('x-user-id', user.id);
+    requestHeaders.set('x-user-email', user.email);
+    requestHeaders.set('x-access-token', externalAccessToken || '');
+    requestHeaders.set('Authorization', `Bearer ${externalAccessToken || ''}`);
+
+    console.log('Middleware - Setting headers:', {
+      'x-user-id': user.id,
+      'x-user-email': user.email,
+      'x-access-token': externalAccessToken ? 'present' : 'missing',
+    });
+
+    // Use rewrite to internally redirect to the API route with the modified headers
+    const response = NextResponse.rewrite(new URL(req.url));
+    response.headers.set('x-user-id', user.id);
+    response.headers.set('x-user-email', user.email);
+    response.headers.set('x-access-token', externalAccessToken || '');
+    response.headers.set('Authorization', `Bearer ${externalAccessToken || ''}`);
+
+    console.log('Middleware - Final response headers:', Object.fromEntries(response.headers));
+
+    return response;
+  } catch (error) {
+    console.error('Middleware - Error processing request:', error);
     return NextResponse.redirect(new URL('/login', req.url));
   }
-
-  // Attach user info and token to request headers for BFF endpoints
-  const requestHeaders = new Headers(req.headers);
-  requestHeaders.set('x-user-id', user.id);
-  requestHeaders.set('x-user-email', user.email);
-  requestHeaders.set('x-access-token', token);
-
-  // Forward the modified request to the next handler
-  return NextResponse.next({
-    request: {
-      headers: requestHeaders,
-    },
-  });
 }
 
 export const config = {
   matcher: [
     '/dashboard/:path*',
+    '/api/me',
+    '/api/publications',
     '/publications/:path*',
-    '/api/:path*', // Include your BFF API routes
+    '/api/protected-route/:path*',
   ],
 };
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/page.tsx ---
+--- File: page.tsx ---
 
 import Image from "next/image";
 
@@ -571,7 +639,7 @@ export default function Home() {
 }
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/app/signup/page.tsx ---
+--- File: signup/page.tsx ---
 
 // src/app/signup/page.tsx
 
@@ -652,301 +720,7 @@ const SignupPage: React.FC = () => {
 export default SignupPage;
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/components/LogoutButton.tsx ---
-
-// src/components/LogoutButton.tsx
-
-'use client';
-
-import React from 'react';
-import { useAuth } from '@/hooks/useAuth';
-import { useRouter } from 'next/navigation';
-// Removed the logger import
-
-const LogoutButton: React.FC = () => {
-  const { logout } = useAuth();
-  const router = useRouter();
-
-  const handleLogout = async () => {
-    try {
-      await logout();
-      console.log('User logged out successfully'); // Use console.log or client-side logging
-      router.push('/login');
-    } catch (error) {
-      console.error(`Logout error: ${(error as Error).message}`); // Use console.error
-      alert('Logout failed. Please try again.');
-    }
-  };
-
-  return (
-    <button onClick={handleLogout} className="logout-button">
-      Logout
-    </button>
-  );
-};
-
-export default LogoutButton;
-
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/components/PublicationsList.tsx ---
-
-// src/components/PublicationsList.tsx
-
-'use client';
-
-import React, { useEffect, useState } from 'react';
-import { Publication } from '@/lib/api.types';
-
-
-const PublicationsList: React.FC = () => {
-  const [publications, setPublications] = useState<Publication[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchPublications = async () => {
-      try {
-        const res = await fetch('/api/publications/', {
-          method: 'GET',
-          credentials: 'include',
-        });
-
-        if (!res.ok) {
-          const errorData = await res.json();
-          throw new Error(errorData.message || 'Failed to fetch publications');
-        }
-
-        const data: Publication[] = await res.json();
-        setPublications(data);
-      } catch (err) {
-        console.error(`Failed to fetch publications: ${err instanceof Error ? err.message : err}`);
-        setError(err instanceof Error ? err.message : String(err)); // Convert to string if not an Error
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchPublications();
-  }, []);
-
-  if (loading) {
-    return <div>Loading publications...</div>;
-  }
-
-  if (error) {
-    return <div>Error loading publications: {error}</div>;
-  }
-
-  return (
-    <div>
-      <h2>Publications</h2>
-      <ul>
-        {publications.map(pub => (
-          <li key={pub.id}>
-            <h3>{pub.name}</h3>
-            <p>Type: {pub.publication_type}</p>
-            <p>Description: {pub.description || 'N/A'}</p>
-            <p>Privacy: {pub.privacy}</p>
-            {pub.logo && <img src={pub.logo.file} alt={`${pub.name} Logo`} width={100} />}
-            {pub.cover_image && <img src={pub.cover_image.file} alt={`${pub.name} Cover`} width={200} />}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-};
-
-export default PublicationsList;
-
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/context/AuthContext.tsx ---
-
-// src/context/AuthContext.tsx
-
-'use client';
-
-import React, { createContext, useState, useEffect, useCallback } from 'react';
-import { AuthContextType, User } from './AuthContext.types';
-import { makeAuthenticatedRequest } from '../lib/api';
-
-export const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-
-  // Fetch user data
-  const fetchUser = useCallback(async () => {
-    try {
-      const response = await fetch('/api/me/', {
-        method: 'GET',
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        setUser(null);
-        return;
-      }
-
-      const data: User = await response.json();
-      setUser(data);
-    } catch (error) {
-        console.error(`Failed to fetch user: ${(error as Error).message}`);
-      setUser(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchUser();
-  }, [fetchUser]);
-
-  // Login function
-  const login = async (email: string, password: string) => {
-    try {
-      const res = await fetch('/api/auth/login/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ email, password }),
-        credentials: 'include',
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.message || 'Login failed');
-      }
-
-      await fetchUser();
-    } catch (error) {
-      console.error(`Login error: ${(error as Error).message}`);
-      throw error;
-    }
-  };
-
-  // Logout function
-  const logout = async () => {
-    try {
-      const res = await fetch('/api/auth/logout/', {
-        method: 'POST',
-        credentials: 'include',
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.message || 'Logout failed');
-      }
-
-      setUser(null);
-    } catch (error) {
-      console.error(`Logout error: ${(error as Error).message}`);
-      throw error;
-    }
-  };
-
-  // Signup function
-  const signup = async (email: string, password: string) => {
-    try {
-      const res = await fetch('/api/auth/signup/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        const errorMessage = errorData.message || 'Signup failed';
-        console.error(`Signup error: ${errorMessage}`, errorData); // Log detailed error information
-        throw new Error(errorMessage);
-      }
-
-      // Optionally, log the user in after signup
-      await login(email, password);
-    } catch (error) {
-      console.error(`Signup error: ${(error as Error).message}`);
-      throw error;
-    }
-  };
-
-  // Refresh token function
-  const refreshToken = async () => {
-    try {
-      const res = await fetch('/api/auth/token_refresh/', {
-        method: 'POST',
-        credentials: 'include',
-      });
-
-      if (!res.ok) {
-        throw new Error('Token refresh failed');
-      }
-
-      await fetchUser();
-    } catch (error) {
-      console.error(`Refresh token error: ${(error as Error).message}`);
-      setUser(null);
-    }
-  };
-
-  return (
-    <AuthContext.Provider value={{ user, login, logout, signup, refreshToken }}>
-      {children}
-    </AuthContext.Provider>
-  );
-};
-
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/context/AuthContext.types.ts ---
-
-// src/context/AuthContext.types.ts
-
-export interface UserProfile {
-    bio: string;
-    birth_date: string | null;
-    location: string;
-  }
-  
-  export interface User {
-    id: string;
-    email: string;
-    username: string;
-    is_staff: boolean;
-    is_active: boolean;
-    date_joined: string;
-    profile: UserProfile;
-  }
-  
-  export interface AuthContextType {
-    user: User | null;
-    login: (email: string, password: string) => Promise<void>;
-    logout: () => Promise<void>;
-    signup: (email: string, password: string) => Promise<void>;
-    refreshToken: () => Promise<void>;
-  }
-  
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/hooks/useAuth.ts ---
-
-// src/hooks/useAuth.ts
-
-import { useContext } from 'react';
-import { AuthContext } from '../context/AuthContext';
-import { AuthContextType } from '../context/AuthContext.types';
-
-export const useAuth = (): AuthContextType => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
-
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/hooks/useAuth.types.ts ---
-
-
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/lib/api.ts ---
+--- File: api.ts ---
 
 // src/lib/api.ts
 
@@ -955,34 +729,55 @@ const API_BASE_URL = process.env.EXTERNAL_API_BASE_URL || 'https://dev.withgpt.c
 
 import { ApiResponse } from './api.types';
 
-export async function makeAuthenticatedRequest<T>(endpoint: string, accessToken: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        ...(options.headers || {})
-      },
-      credentials: 'include',
-    });
+// src/lib/api.ts
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.message || 'Request failed');
+// src/lib/api.ts
+
+export async function makeAuthenticatedRequest<T>(
+    endpoint: string,
+    accessToken: string,
+    options: RequestInit = {}
+  ): Promise<ApiResponse<T>> {
+    try {
+      const url = `${API_BASE_URL}${endpoint}`;
+      console.log(`Making authenticated request to: ${url}`);
+  
+      // Exclude 'Authorization' and 'authorization' from options.headers
+      const { Authorization, authorization, ...otherHeaders } = options.headers || {};
+  
+      // Create a Headers object and set headers explicitly
+      const headers = new Headers(otherHeaders);
+      headers.set('Content-Type', 'application/json');
+      headers.set('Authorization', `Bearer ${accessToken}`);
+  
+      // Log the headers being sent
+      console.log('Request headers:', Object.fromEntries(headers));
+  
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        // Remove 'credentials: include' as it's unnecessary for server-side requests
+      });
+  
+      console.log(`Response status: ${response.status}`);
+  
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Error response:', errorData);
+        throw new Error(errorData.message || `Request failed with status ${response.status}`);
+      }
+  
+      const data = await response.json();
+      console.log('Successful response data:', data);
+      return data as ApiResponse<T>;
+    } catch (error) {
+      console.error('Authenticated request failed:', error);
+      throw error;
     }
-
-    return response.json() as Promise<ApiResponse<T>>;
-  } catch (error) {
-    console.error('Authenticated request failed:', error);
-    throw error;
   }
-}
+  
 
-// Additional API calls can be defined here if needed
-
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/lib/api.types.ts ---
+--- File: api.types.ts ---
 
   // src/lib/api.types.ts
   
@@ -1055,7 +850,7 @@ export async function makeAuthenticatedRequest<T>(endpoint: string, accessToken:
   export type PublicationsResponse = Publication[];
   
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/lib/auth.ts ---
+--- File: auth.ts ---
 
 // src/lib/auth.ts
 
@@ -1134,33 +929,39 @@ export async function makeAuthenticatedRequest<T>(
  * @throws Will throw an error if authentication fails.
  */
 export async function authenticateUser(email: string, password: string): Promise<{ accessToken: string; user: User }> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/auth/login/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.message || 'Login failed');
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/login/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+  
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.message || 'Login failed');
+      }
+  
+      const data: LoginResponse = await response.json();
+      const accessToken = data.access_token;
+  
+      // Create a user object from the response data
+      const user: User = {
+        id: data.id,
+        email: data.email,
+        username: data.username,
+        // Add other user properties as needed
+      };
+  
+      if (!accessToken) {
+        throw new Error('Access token not found in response');
+      }
+  
+      return { accessToken, user };
+    } catch (error) {
+      console.error(`Login failed: ${(error as Error).message}`);
+      throw new Error('Authentication failed');
     }
-
-    const data: LoginResponse = await response.json();
-    const accessToken = data.access_token; // Ensure the external API returns 'access_token'
-    const user = data.user; // Assuming the external API returns user data in 'user' field
-
-    if (!accessToken || !user) {
-      throw new Error('Invalid response from external API');
-    }
-
-    return { accessToken, user };
-  } catch (error) {
-    console.error(`Login failed: ${(error as Error).message}`);
-    throw new Error('Authentication failed');
   }
-}
-
 /**
  * Registers a new user by communicating with the external API.
  * @param email - New user's email address.
@@ -1287,11 +1088,11 @@ export async function refreshAuthToken(oldToken: string): Promise<string | null>
 }
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/lib/auth.types.ts ---
+--- File: auth.types.ts ---
 
 
 
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/lib/getUserFromRequest.ts ---
+--- File: getUserFromRequest.ts ---
 
 // src/lib/getUserFromRequest.ts
 
@@ -1300,55 +1101,12 @@ export function getUserFromRequest(request: Request) {
     const userEmail = request.headers.get('x-user-email');
     const accessToken = request.headers.get('x-access-token');
   
-    if (!userId || !userEmail || !accessToken) {
-      throw new Error('User information is missing');
-    }
+    console.log('getUserFromRequest - Extracted data:', {
+      userId,
+      userEmail,
+      accessToken: accessToken ? 'present' : 'missing',
+    });
   
     return { userId, userEmail, accessToken };
   }
   
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/middleware.ts ---
-
-// middleware.ts
-
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-import { verifyToken } from '@/lib/auth';
-
-export async function middleware(req: NextRequest) {
-  const token = req.cookies.get(process.env.COOKIE_NAME || 'auth_token')?.value;
-
-  if (!token) {
-    console.warn(`Unauthorized access attempt to ${req.nextUrl.pathname}`);
-    return NextResponse.redirect(new URL('/login', req.url));
-  }
-
-  const user = await verifyToken(token);
-  if (!user) {
-    console.warn(`Invalid token for access to ${req.nextUrl.pathname}`);
-    return NextResponse.redirect(new URL('/login', req.url));
-  }
-
-  const response = NextResponse.next();
-  response.headers.set('x-user-id', user.id);
-
-  return response;
-}
-
-export const config = {
-  matcher: [
-    '/dashboard/:path*',
-    '/publications/:path*',
-    '/api/protected-route/:path*',
-  ],
-};
-
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/types/common.ts ---
-
-
-
---- File: /Users/pc/Dropbox/00000000magazenie/mag-nextjs/src/types/external-api.ts ---
-
-
